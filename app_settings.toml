@@ -1,0 +1,15 @@
+[app]
+app_name = "Auto EDA & Storytelling"
+api_version = "0.1.0"
+app_env = "dev"
+storage_dir = "storage"
+
+[db]
+database_url = "sqlite:///./dev.db"
+
+[queue]
+use_redis = false
+redis_url = "redis://localhost:6379/0"
+
+[cors]
+origins = "http://127.0.0.1:8501,http://localhost:8501"
