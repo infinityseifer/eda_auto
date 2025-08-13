@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+*.egg
+
+# Environment files
+.env
+*.env
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# IDE/editor settings
+.vscode/
+.idea/
+
+# Storage folder — ignore all but .gitkeep
+/storage/*
+!/storage/.gitkeep
+
+# Scripts folder — keep all scripts, allow .gitkeep
+# (not ignored unless you explicitly add ignore rules)
