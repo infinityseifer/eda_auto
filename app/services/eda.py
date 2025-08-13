@@ -1,3 +1,4 @@
+# app/services/eda.py
 """EDA service for Auto-EDA MVP.
 
 Functions
@@ -8,7 +9,7 @@ run_eda(dataset_path: str, sample_rows: int | None = 50000, max_cols: int = 100)
 Notes
 -----
 - Uses pandas and matplotlib only (no seaborn) for portability.
-- Saves chart PNGs under `<storage_dir>/images/<dataset_id>/` (storage_dir comes from app.state).
+- Saves chart PNGs under `<storage_dir>/images/<dataset_id>/`.
 - Returns a dict with `stats` and `charts` (mapping title -> file path).
 """
 from __future__ import annotations
@@ -20,6 +21,10 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
+
+# 👉 Headless backend to avoid GUI warnings
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from app.main import app
@@ -50,16 +55,27 @@ def _load_df(path: str, nrows: int | None) -> pd.DataFrame:
 
 
 def _coerce_datetime(df: pd.DataFrame) -> pd.DataFrame:
+    """Try to parse object columns as datetimes with common formats first."""
+    common_formats = ["%Y-%m-%d", "%m/%d/%Y", "%d-%m-%Y"]
+
     for c in df.columns:
         if df[c].dtype == object:
-            try:
-                parsed = pd.to_datetime(df[c], errors="coerce", infer_datetime_format=True)
-                # If many values parse, keep it
+            col = df[c]
+            for fmt in common_formats:
+                try:
+                    parsed = pd.to_datetime(col, format=fmt, errors="coerce")
+                    if parsed.notna().mean() > 0.9:
+                        df[c] = parsed
+                        break
+                except Exception:
+                    continue
+            else:
+                # Fallback generic parsing (might trigger warning if formats vary)
+                parsed = pd.to_datetime(col, errors="coerce")
                 if parsed.notna().mean() > 0.9:
                     df[c] = parsed
-            except Exception:
-                pass
     return df
+
 
 
 def _top_categories(df: pd.DataFrame, max_cols: int = 4) -> List[Tuple[str, List[Tuple[str, int]]]]:
@@ -98,12 +114,12 @@ def _correlation_pairs(df: pd.DataFrame, top_k: int = 20):
 
 def _save_plot(fig, path: Path):
     fig.tight_layout()
-    fig.savefig(path, dpi=140)
-    plt.close(fig)
+    fig.savefig(path, dpi=140, bbox_inches="tight")
+    plt.close(fig)  # 👉 always close to avoid GUI/backend warnings
 
 
 def _histogram(imgdir: Path, df: pd.DataFrame, col: str) -> Path:
-    fig = plt.figure()
+    fig = plt.figure(figsize=(7, 4))
     s = df[col].dropna()
     plt.hist(s, bins=30)
     plt.title(f"Distribution of {col}")
@@ -115,7 +131,7 @@ def _histogram(imgdir: Path, df: pd.DataFrame, col: str) -> Path:
 
 
 def _bar_topk(imgdir: Path, df: pd.DataFrame, col: str, k: int = 10) -> Path:
-    fig = plt.figure()
+    fig = plt.figure(figsize=(7, 4))
     vc = df[col].astype("object").fillna("<NA>").value_counts().head(k)
     plt.bar(vc.index.astype(str), vc.values)
     plt.title(f"Top {k} {col}")
@@ -131,7 +147,7 @@ def _missingness_heatmap(imgdir: Path, df: pd.DataFrame) -> Path | None:
     miss = df.isna()
     if miss.sum().sum() == 0:
         return None
-    fig = plt.figure()
+    fig = plt.figure(figsize=(7, 4))
     plt.imshow(miss.values, aspect="auto")
     plt.title("Missingness by row/column")
     plt.xlabel("Columns")
@@ -146,7 +162,7 @@ def _corr_heatmap(imgdir: Path, df: pd.DataFrame) -> Path | None:
     if num.shape[1] < 2:
         return None
     corr = num.corr(numeric_only=True)
-    fig = plt.figure()
+    fig = plt.figure(figsize=(7, 6))
     plt.imshow(corr.values, interpolation="nearest")
     plt.title("Correlation heatmap")
     plt.xticks(range(len(corr.columns)), corr.columns, rotation=45, ha="right")
@@ -157,26 +173,7 @@ def _corr_heatmap(imgdir: Path, df: pd.DataFrame) -> Path | None:
 
 
 def run_eda(dataset_path: str, sample_rows: int | None = 50_000, max_cols: int = 100) -> dict:
-    """Run lightweight EDA and export core charts.
-
-    Parameters
-    ----------
-    dataset_path : str
-        Path to CSV or XLSX.
-    sample_rows : int | None
-        If provided and the dataset is larger, a sample is taken for charting.
-    max_cols : int
-        Guardrail to avoid overwhelming plots on very wide dataset.
-
-    Returns
-    -------
-    dict
-        {
-          "dataset_id": str,
-          "stats": {...},
-          "charts": {title: filepath, ...}
-        }
-    """
+    """Run lightweight EDA and export core charts."""
     dataset_id = Path(dataset_path).stem
     imgdir = _img_dir(dataset_id)
 

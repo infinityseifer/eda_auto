@@ -7,7 +7,12 @@ from __future__ import annotations
 import os
 import requests
 
-API = os.getenv("API_URL", "http://127.0.0.1:8000")
+API_VERSION = "1.1.0"
+
+
+# web/_client.py
+API = "http://127.0.0.1:8000"  # force local API for now
+
 
 
 def api_post(path: str, **kwargs):
