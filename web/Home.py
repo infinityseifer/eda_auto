@@ -86,29 +86,71 @@ def download_button_for_report(pptx_path: str):
 # ---------------------------
 # Helper: run one dataset
 # ---------------------------
+# inside web/Home.py
+
 def render_run_row(ds_id: str, label: str = "Run EDA & Generate Slides", key_prefix: str = "run"):
     col1, col2 = st.columns([4, 2])
     with col1:
         st.write(f"**Dataset ID:** `{ds_id}`")
     with col2:
-        if st.button(label, key=f"{key_prefix}-{ds_id}"):  # unique per section
-            r = api_post("/jobs/run", params={"dataset_id": ds_id})
-            if not r.ok:
-                st.error(f"API error: {r.status_code} — {r.text}")
-                return
-            payload = r.json()
-            job_id = payload.get("job_id")
-            if job_id == "sync":
+        if st.button(label, key=f"{key_prefix}-{ds_id}"):
+            with st.spinner("Running pipeline..."):
+                r = api_post("/jobs/run", params={"dataset_id": ds_id, "theme": theme, "color": color})
+
+            if r.ok:
+                payload = r.json()
                 result = payload.get("result", {})
+                logs = result.get("logs", [])
+
+                # progress visualization (client-side since it's sync)
+                stages = ["prepare-output-dir", "run-eda", "generate-narrative", "build-pptx"]
+                done = {x["name"]: x for x in logs if x.get("status") == "ok"}
+                pct = int(100 * min(len(done), len(stages)) / len(stages))
+                st.progress(pct, text=f"Steps complete: {len(done)}/{len(stages)}")
+
+                # show step logs
+                with st.expander("Run details", expanded=False):
+                    for s in logs:
+                        emoji = "✅" if s["status"] == "ok" else ("❌" if s["status"] == "error" else "⏳")
+                        st.write(f"{emoji} **{s['name']}** — {s['status']}")
+                        if s.get("details"):
+                            st.code(s["details"], language="text")
+
+                # download when ready
                 pptx_path = result.get("pptx_path")
                 if pptx_path:
                     st.success("Report ready!")
                     download_button_for_report(pptx_path)
                 else:
-                    st.info("Pipeline finished, but no pptx_path returned.")
+                    st.info("Pipeline finished, but no pptx produced.")
+
             else:
-                st.session_state["job_id"] = job_id
-                st.info(f"Queued job: {job_id}")
+                # 500 with structured detail from the API
+                try:
+                    err_payload = r.json()  # {'detail': { 'error': {...}, 'logs': [...] }}
+                except Exception:
+                    st.error(f"API error: {r.status_code} — {r.text}")
+                    return
+
+                detail = err_payload.get("detail", {})
+                logs = detail.get("logs", []) or detail.get("result", {}).get("logs", [])
+                err = detail.get("error") or detail.get("result", {}).get("error")
+
+                st.error("Pipeline failed.")
+                if err and err.get("message"):
+                    st.write(f"**Reason:** {err.get('message')}")
+                with st.expander("Error details", expanded=False):
+                    if err and err.get("traceback"):
+                        st.code(err["traceback"], language="text")
+
+                if logs:
+                    with st.expander("Step logs", expanded=True):
+                        for s in logs:
+                            emoji = "✅" if s["status"] == "ok" else ("❌" if s["status"] == "error" else "⏳")
+                            st.write(f"{emoji} **{s['name']}** — {s['status']}")
+                            if s.get("details"):
+                                st.code(s["details"], language="text")
+            # end of button click
 
 # ---------------------------
 # Quick-run for sample

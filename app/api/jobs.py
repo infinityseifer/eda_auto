@@ -1,17 +1,15 @@
 # app/api/jobs.py
-"""
-DEV MODE: run the EDA pipeline synchronously (no Redis/RQ required).
-"""
 from __future__ import annotations
 
 from pathlib import Path
-from fastapi import APIRouter, HTTPException
-from app.main import app
+from fastapi import APIRouter, HTTPException, Query
+from app.core.config import settings
+from app.services.pipeline import run_full_pipeline
 
 router = APIRouter()
 
 def _storage_root() -> Path:
-    return Path(getattr(app.state, "storage_dir", "./storage"))
+    return Path(settings.STORAGE_DIR)
 
 def _resolve_dataset_path(dataset_id: str) -> Path:
     root = _storage_root()
@@ -20,23 +18,19 @@ def _resolve_dataset_path(dataset_id: str) -> Path:
     raise HTTPException(status_code=404, detail="Dataset not found")
 
 @router.post("/run")
-def run_job(dataset_id: str):
+def run_job(
+    dataset_id: str = Query(..., description="ID part of stored file name"),
+    theme: str = Query("light", pattern="^(light|dark)$"),
+    color: str = Query("#1f77b4"),
+):
     """
-    Run the full pipeline inline and return the result immediately.
+    Sync pipeline with logs and error surfacing.
     """
     dataset_path = _resolve_dataset_path(dataset_id)
-    try:
-        from app.services.pipeline import run_full_pipeline
-        result = run_full_pipeline(str(dataset_path), str(_storage_root()))
-        return {"job_id": "sync", "status": "finished", "result": result}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Pipeline failed: {e}")
+    result = run_full_pipeline(str(dataset_path), str(_storage_root()), theme=theme, color=color)
 
-@router.get("/{job_id}")
-def job_status(job_id: str):
-    """
-    Kept for UI compatibility. In sync mode there's nothing to poll.
-    """
-    if job_id == "sync":
-        return {"id": "sync", "status": "finished", "result": None}
-    raise HTTPException(status_code=404, detail="Job not found")
+    # if pipeline signaled an error, return 500 with details to the UI
+    if result.get("error"):
+        raise HTTPException(status_code=500, detail=result)
+
+    return {"job_id": "sync", "status": "finished", "result": result}
