@@ -14,7 +14,6 @@ Notes
 """
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -22,14 +21,16 @@ from typing import Dict, List, Tuple
 import numpy as np
 import pandas as pd
 
-# 👉 Headless backend to avoid GUI warnings
+# Headless backend to avoid GUI warnings
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from app.main import app
+# Import settings directly to avoid circular imports with app.main
+from app.core.config import settings
 
 
+# ----------------------------- Config ------------------------------------------
 @dataclass
 class EDAConfig:
     sample_rows: int | None = 50_000
@@ -38,8 +39,9 @@ class EDAConfig:
     corr_top_k: int = 20
 
 
+# ----------------------------- Helpers -----------------------------------------
 def _storage_root() -> Path:
-    return Path(getattr(app.state, "storage_dir", "./storage"))
+    return Path(settings.STORAGE_DIR)
 
 
 def _img_dir(dataset_id: str) -> Path:
@@ -49,18 +51,24 @@ def _img_dir(dataset_id: str) -> Path:
 
 
 def _load_df(path: str, nrows: int | None) -> pd.DataFrame:
-    if path.lower().endswith(".csv"):
+    path_lower = path.lower()
+    if path_lower.endswith(".csv"):
         return pd.read_csv(path, nrows=nrows)
-    return pd.read_excel(path, nrows=nrows)
+    elif path_lower.endswith(".xlsx") or path_lower.endswith(".xls"):
+        # Let pandas choose engine; user can install openpyxl if needed
+        return pd.read_excel(path, nrows=nrows)
+    else:
+        # Try CSV as a last resort
+        return pd.read_csv(path, nrows=nrows)
 
 
 def _coerce_datetime(df: pd.DataFrame) -> pd.DataFrame:
-    """Try to parse object columns as datetimes with common formats first."""
-    common_formats = ["%Y-%m-%d", "%m/%d/%Y", "%d-%m-%Y"]
-
+    """Try common date formats first, then generic parsing if ≥90% parse rate."""
+    common_formats = ["%Y-%m-%d", "%m/%d/%Y", "%d-%m-%Y", "%Y/%m/%d", "%d/%m/%Y"]
     for c in df.columns:
         if df[c].dtype == object:
             col = df[c]
+            parsed = None
             for fmt in common_formats:
                 try:
                     parsed = pd.to_datetime(col, format=fmt, errors="coerce")
@@ -68,14 +76,16 @@ def _coerce_datetime(df: pd.DataFrame) -> pd.DataFrame:
                         df[c] = parsed
                         break
                 except Exception:
-                    continue
+                    parsed = None
             else:
-                # Fallback generic parsing (might trigger warning if formats vary)
-                parsed = pd.to_datetime(col, errors="coerce")
-                if parsed.notna().mean() > 0.9:
-                    df[c] = parsed
+                # Fallback to generic parsing (dateutil); keep only if consistent
+                try:
+                    parsed = pd.to_datetime(col, errors="coerce")
+                    if parsed.notna().mean() > 0.9:
+                        df[c] = parsed
+                except Exception:
+                    pass
     return df
-
 
 
 def _top_categories(df: pd.DataFrame, max_cols: int = 4) -> List[Tuple[str, List[Tuple[str, int]]]]:
@@ -93,6 +103,7 @@ def _numeric_summary(df: pd.DataFrame) -> pd.DataFrame:
     if num.empty:
         return pd.DataFrame()
     desc = num.describe().T
+    # Explicit numeric_only guards for newer pandas
     desc["skew"] = num.skew(numeric_only=True)
     desc["kurtosis"] = num.kurtosis(numeric_only=True)
     return desc.reset_index().rename(columns={"index": "column"})
@@ -103,7 +114,7 @@ def _correlation_pairs(df: pd.DataFrame, top_k: int = 20):
     if num.shape[1] < 2:
         return []
     corr = num.corr(numeric_only=True).abs()
-    pairs = []
+    pairs: List[Tuple[str, str, float]] = []
     cols = corr.columns
     for i in range(1, len(cols)):
         for j in range(i):
@@ -115,7 +126,7 @@ def _correlation_pairs(df: pd.DataFrame, top_k: int = 20):
 def _save_plot(fig, path: Path):
     fig.tight_layout()
     fig.savefig(path, dpi=140, bbox_inches="tight")
-    plt.close(fig)  # 👉 always close to avoid GUI/backend warnings
+    plt.close(fig)  # always close to avoid backend warnings
 
 
 def _histogram(imgdir: Path, df: pd.DataFrame, col: str) -> Path:
@@ -172,11 +183,32 @@ def _corr_heatmap(imgdir: Path, df: pd.DataFrame) -> Path | None:
     return out
 
 
+# ----------------------------- Public API --------------------------------------
 def run_eda(dataset_path: str, sample_rows: int | None = 50_000, max_cols: int = 100) -> dict:
-    """Run lightweight EDA and export core charts."""
+    """Run lightweight EDA and export core charts.
+
+    Parameters
+    ----------
+    dataset_path : str
+        Path to CSV or XLSX.
+    sample_rows : int | None
+        If provided and the dataset is larger, a sample is taken for charting.
+    max_cols : int
+        Guardrail to avoid overwhelming plots on very wide dataset.
+
+    Returns
+    -------
+    dict
+        {
+          "dataset_id": str,
+          "stats": {...},
+          "charts": {title: filepath, ...}
+        }
+    """
     dataset_id = Path(dataset_path).stem
     imgdir = _img_dir(dataset_id)
 
+    # Load & coerce
     df = _load_df(dataset_path, nrows=sample_rows)
     df = _coerce_datetime(df)
 

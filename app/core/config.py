@@ -18,6 +18,8 @@ try:
 except Exception:  # pragma: no cover
     import tomli as tomllib  # type: ignore
 
+API_VERSION = "1.0.0"
+
 
 class TOMLSettingsSource(PydanticBaseSettingsSource):
     """

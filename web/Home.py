@@ -7,8 +7,29 @@ from pathlib import Path
 import streamlit as st
 from _client import api_get, api_post, API  # adjust path if needed
 
-st.set_page_config(page_title="Auto EDA — v1.1.0 (PR1)", page_icon="📊")
-st.title("📊 Auto EDA & Storytelling — v1.1.0 (PR1)")
+st.set_page_config(page_title="Auto EDA)", page_icon="📊")
+st.title("📊 Auto EDA & Storytelling")
+
+# near the top of the page (under the title)
+st.subheader("Presentation theme")
+colA, colB = st.columns([1, 1])
+with colA:
+    theme = st.selectbox("Theme", ["light", "dark"], index=0, key="sel-theme")
+with colB:
+    color = st.color_picker("Accent color", "#1f77b4", key="sel-color")
+
+# pass theme/color into the run call
+def render_run_row(ds_id: str, label: str = "Run EDA & Generate Slides", key_prefix: str = "run"):
+    col1, col2 = st.columns([4, 2])
+    with col1:
+        st.write(f"**Dataset ID:** `{ds_id}`")
+    with col2:
+        if st.button(label, key=f"{key_prefix}-{ds_id}"):
+            r = api_post("/jobs/run", params={"dataset_id": ds_id, "theme": theme, "color": color})
+            # ... rest unchanged ...
+
+
+
 st.caption(f"API base: {API}")
 
 # Health check
